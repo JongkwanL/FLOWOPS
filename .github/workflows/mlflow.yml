@@ -1,0 +1,143 @@
+name: MLflow Model Registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment_name:
+        description: 'MLflow Experiment Name'
+        required: true
+        default: 'default-experiment'
+      model_name:
+        description: 'Model Name for Registry'
+        required: true
+      stage:
+        description: 'Model Stage'
+        required: true
+        default: 'Staging'
+        type: choice
+        options:
+          - None
+          - Staging
+          - Production
+          - Archived
+  push:
+    paths:
+      - 'mlflow/experiments/**'
+      - 'pipelines/training/**'
+
+env:
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  train-and-register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Setup DVC
+        run: |
+          dvc remote modify storage access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          dvc remote modify storage secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          dvc pull
+      
+      - name: Run hyperparameter tuning
+        run: |
+          python pipelines/training/hyperparameter_tuning.py \
+            --experiment-name="${{ github.event.inputs.experiment_name || 'auto-experiment' }}" \
+            --n-trials=50 \
+            --timeout=3600
+      
+      - name: Train best model
+        id: training
+        run: |
+          python pipelines/training/train.py \
+            --experiment-name="${{ github.event.inputs.experiment_name || 'auto-experiment' }}" \
+            --use-best-params \
+            --log-model
+          
+          echo "run_id=$(python -c 'import mlflow; print(mlflow.last_active_run().info.run_id)')" >> $GITHUB_OUTPUT
+      
+      - name: Evaluate model
+        id: evaluation
+        run: |
+          python pipelines/evaluation/evaluate.py \
+            --run-id="${{ steps.training.outputs.run_id }}" \
+            --test-data-path="data/test" \
+            --metrics-output="metrics.json"
+          
+          accuracy=$(jq -r '.accuracy' metrics.json)
+          f1_score=$(jq -r '.f1_score' metrics.json)
+          
+          echo "accuracy=$accuracy" >> $GITHUB_OUTPUT
+          echo "f1_score=$f1_score" >> $GITHUB_OUTPUT
+      
+      - name: Register model to registry
+        if: ${{ steps.evaluation.outputs.accuracy > 0.85 }}
+        run: |
+          python pipelines/deployment/register_model.py \
+            --run-id="${{ steps.training.outputs.run_id }}" \
+            --model-name="${{ github.event.inputs.model_name || 'flowops-model' }}" \
+            --tags="accuracy:${{ steps.evaluation.outputs.accuracy }},f1:${{ steps.evaluation.outputs.f1_score }},commit:${{ github.sha }}"
+      
+      - name: Transition model stage
+        if: ${{ github.event.inputs.stage && steps.evaluation.outputs.accuracy > 0.85 }}
+        run: |
+          python pipelines/deployment/transition_model.py \
+            --model-name="${{ github.event.inputs.model_name }}" \
+            --version="latest" \
+            --stage="${{ github.event.inputs.stage }}" \
+            --archive-existing
+      
+      - name: Generate model card
+        run: |
+          python pipelines/deployment/generate_model_card.py \
+            --run-id="${{ steps.training.outputs.run_id }}" \
+            --output-path="model_card.md"
+      
+      - name: Upload model card
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-card-${{ github.sha }}
+          path: model_card.md
+      
+      - name: Comment PR with metrics
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const accuracy = '${{ steps.evaluation.outputs.accuracy }}';
+            const f1Score = '${{ steps.evaluation.outputs.f1_score }}';
+            const runId = '${{ steps.training.outputs.run_id }}';
+            
+            const comment = `## 📊 Model Performance Report
+            
+            **Run ID:** ${runId}
+            **Accuracy:** ${accuracy}
+            **F1 Score:** ${f1Score}
+            
+            [View in MLflow](${{ env.MLFLOW_TRACKING_URI }}/#/experiments/0/runs/${runId})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

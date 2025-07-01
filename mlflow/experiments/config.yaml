@@ -1,0 +1,84 @@
+experiments:
+  default:
+    name: "default-experiment"
+    artifact_location: "s3://flowops-mlflow/artifacts"
+    tracking_uri: "http://mlflow.flowops.io"
+    tags:
+      environment: "development"
+      team: "ml-platform"
+  
+  production:
+    name: "production-experiment"
+    artifact_location: "s3://flowops-mlflow-prod/artifacts"
+    tracking_uri: "http://mlflow-prod.flowops.io"
+    tags:
+      environment: "production"
+      team: "ml-platform"
+      sla: "99.9"
+  
+  hyperparameter_tuning:
+    name: "hyperparameter-tuning"
+    artifact_location: "s3://flowops-mlflow/hp-tuning"
+    tracking_uri: "http://mlflow.flowops.io"
+    tags:
+      type: "optimization"
+      framework: "optuna"
+
+model_registry:
+  backend_store_uri: "postgresql://mlflow:${MLFLOW_DB_PASSWORD}@postgres.flowops.io:5432/mlflow"
+  default_artifact_root: "s3://flowops-models"
+  
+  stages:
+    - None
+    - Staging
+    - Production
+    - Archived
+  
+  transition_rules:
+    to_staging:
+      min_accuracy: 0.80
+      min_f1_score: 0.75
+      require_tests: true
+    
+    to_production:
+      min_accuracy: 0.85
+      min_f1_score: 0.80
+      require_staging_time_hours: 24
+      require_approval: true
+      max_latency_ms: 100
+
+tracking:
+  autolog:
+    sklearn: true
+    tensorflow: true
+    pytorch: true
+    xgboost: true
+    spark: false
+  
+  log_params:
+    - learning_rate
+    - batch_size
+    - epochs
+    - optimizer
+    - loss_function
+    - architecture
+    - dropout_rate
+    - regularization
+  
+  log_metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+    - auc_roc
+    - loss
+    - val_loss
+    - inference_time_ms
+  
+  log_artifacts:
+    - model
+    - requirements.txt
+    - conda.yaml
+    - model_card.md
+    - confusion_matrix.png
+    - feature_importance.json

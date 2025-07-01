@@ -1,0 +1,104 @@
+stages:
+  download_data:
+    cmd: python pipelines/data/download.py
+    deps:
+      - pipelines/data/download.py
+    params:
+      - data.source_url
+      - data.raw_path
+    outs:
+      - data/raw
+
+  prepare_data:
+    cmd: python pipelines/data/prepare.py
+    deps:
+      - pipelines/data/prepare.py
+      - data/raw
+    params:
+      - prepare.test_split
+      - prepare.random_seed
+      - prepare.stratify
+    outs:
+      - data/prepared
+
+  extract_features:
+    cmd: python pipelines/data/featurize.py
+    deps:
+      - pipelines/data/featurize.py
+      - data/prepared
+    params:
+      - featurize.max_features
+      - featurize.ngrams
+      - featurize.scaling_method
+    outs:
+      - data/features
+
+  train_model:
+    cmd: python pipelines/training/train.py
+    deps:
+      - pipelines/training/train.py
+      - data/features
+    params:
+      - train.algorithm
+      - train.hyperparameters
+      - train.cross_validation
+    outs:
+      - models/model.pkl
+      - models/metadata.json
+    metrics:
+      - metrics/train_metrics.json:
+          cache: false
+
+  evaluate_model:
+    cmd: python pipelines/evaluation/evaluate.py
+    deps:
+      - pipelines/evaluation/evaluate.py
+      - models/model.pkl
+      - data/features
+    outs:
+      - reports/evaluation_report.html
+      - reports/confusion_matrix.png
+      - reports/feature_importance.json
+    metrics:
+      - metrics/eval_metrics.json:
+          cache: false
+    plots:
+      - reports/plots/metrics.json:
+          template: linear
+          x: epoch
+          y: accuracy
+      - reports/plots/confusion_matrix.csv:
+          template: confusion
+          x: predicted
+          y: actual
+
+  deploy_model:
+    cmd: python pipelines/deployment/deploy.py
+    deps:
+      - pipelines/deployment/deploy.py
+      - models/model.pkl
+      - models/metadata.json
+    params:
+      - deploy.target_environment
+      - deploy.strategy
+      - deploy.health_check_endpoint
+    outs:
+      - deployment/manifest.yaml
+      - deployment/config.json
+
+metrics:
+  - metrics/train_metrics.json
+  - metrics/eval_metrics.json
+
+plots:
+  - reports/plots/metrics.json:
+      template: linear
+      x: epoch
+      y: 
+        metrics/train_metrics.json: [accuracy, loss]
+        metrics/eval_metrics.json: [val_accuracy, val_loss]
+  
+  - reports/plots/roc_curve.json:
+      template: simple
+      x: fpr
+      y: tpr

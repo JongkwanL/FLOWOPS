@@ -1,0 +1,19 @@
+[core]
+    remote = storage
+    autostage = true
+    analytics = false
+
+['remote "storage"']
+    url = s3://flowops-dvc/data
+    region = us-west-2
+
+['remote "backup"']
+    url = s3://flowops-dvc-backup/data
+    region = us-east-1
+
+[cache]
+    type = symlink
+    protected = true
+
+[plots]
+    html_template = ./dvc/templates/plots.html

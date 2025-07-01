@@ -1,0 +1,115 @@
+data:
+  source_url: "s3://flowops-datasets/raw/dataset.csv"
+  raw_path: "data/raw"
+  processed_path: "data/processed"
+
+prepare:
+  test_split: 0.2
+  val_split: 0.1
+  random_seed: 42
+  stratify: true
+  handle_missing: "drop"
+  handle_outliers: "clip"
+
+featurize:
+  max_features: 5000
+  ngrams: [1, 2]
+  scaling_method: "standard"
+  encoding_method: "label"
+  feature_selection:
+    method: "mutual_info"
+    k_best: 100
+
+train:
+  algorithm: "xgboost"
+  hyperparameters:
+    learning_rate: 0.1
+    max_depth: 6
+    n_estimators: 100
+    subsample: 0.8
+    colsample_bytree: 0.8
+    objective: "binary:logistic"
+    eval_metric: "auc"
+  
+  cross_validation:
+    enabled: true
+    folds: 5
+    scoring: "roc_auc"
+  
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.001
+  
+  optimization:
+    method: "optuna"
+    n_trials: 50
+    timeout: 3600
+    metric: "f1_score"
+
+evaluate:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+    - roc_auc
+    - log_loss
+  
+  confidence_threshold: 0.5
+  
+  report:
+    format: "html"
+    include_plots: true
+    include_shap: true
+
+deploy:
+  target_environment: "staging"
+  strategy: "canary"
+  
+  canary:
+    initial_weight: 10
+    increment: 10
+    interval_minutes: 5
+    success_threshold: 0.95
+  
+  blue_green:
+    switch_timeout: 60
+    health_check_interval: 10
+  
+  rollback:
+    automatic: true
+    metric_threshold: 0.85
+    window_minutes: 10
+  
+  health_check_endpoint: "/health"
+  readiness_endpoint: "/ready"
+  
+  resources:
+    cpu_request: "500m"
+    cpu_limit: "2000m"
+    memory_request: "1Gi"
+    memory_limit: "4Gi"
+    
+  autoscaling:
+    enabled: true
+    min_replicas: 2
+    max_replicas: 10
+    target_cpu_utilization: 70
+
+monitoring:
+  metrics_port: 8000
+  log_level: "INFO"
+  
+  alerts:
+    - name: "model_accuracy_low"
+      condition: "accuracy < 0.8"
+      severity: "warning"
+    
+    - name: "prediction_latency_high"
+      condition: "p95_latency > 500ms"
+      severity: "critical"
+    
+    - name: "error_rate_high"
+      condition: "error_rate > 0.01"
+      severity: "critical"

@@ -1,0 +1,158 @@
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deployment_strategy:
+        description: 'Deployment Strategy'
+        required: true
+        default: 'canary'
+        type: choice
+        options:
+          - canary
+          - blue-green
+          - rolling
+
+env:
+  AWS_REGION: us-west-2
+  EKS_CLUSTER_NAME: flowops-cluster
+  HELM_VERSION: v3.13.0
+
+jobs:
+  deploy-staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+      
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+      
+      - name: Deploy to staging with Helm
+        run: |
+          helm upgrade --install flowops-staging \
+            ./infrastructure/helm/flowops \
+            --namespace staging \
+            --create-namespace \
+            --set image.tag=${{ github.sha }} \
+            --set environment=staging \
+            --wait --timeout 10m
+      
+      - name: Run smoke tests
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app=flowops \
+            -n staging \
+            --timeout=300s
+          
+          python tests/smoke/test_deployment.py \
+            --endpoint=https://staging.flowops.example.com \
+            --timeout=60
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+      
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+      
+      - name: Deploy with Argo Rollouts
+        run: |
+          deployment_strategy="${{ github.event.inputs.deployment_strategy || 'canary' }}"
+          
+          helm upgrade --install flowops-prod \
+            ./infrastructure/helm/flowops \
+            --namespace production \
+            --create-namespace \
+            --set image.tag=${{ github.sha }} \
+            --set environment=production \
+            --set rollout.strategy=$deployment_strategy \
+            --set rollout.steps=5 \
+            --set rollout.pauseDuration=5m \
+            --wait --timeout 30m
+      
+      - name: Monitor rollout
+        run: |
+          kubectl argo rollouts status flowops -n production --watch
+      
+      - name: Promote rollout if metrics pass
+        run: |
+          python pipelines/deployment/monitor_metrics.py \
+            --namespace=production \
+            --deployment=flowops \
+            --threshold=0.95 \
+            --duration=5m
+          
+          if [ $? -eq 0 ]; then
+            kubectl argo rollouts promote flowops -n production
+          else
+            echo "Metrics below threshold, initiating rollback"
+            kubectl argo rollouts abort flowops -n production
+            exit 1
+          fi
+
+  rollback:
+    needs: deploy-production
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+      
+      - name: Rollback deployment
+        run: |
+          kubectl argo rollouts undo flowops -n production
+          kubectl argo rollouts status flowops -n production --watch
+      
+      - name: Send alert
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: 'Production deployment failed and rolled back!'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()
