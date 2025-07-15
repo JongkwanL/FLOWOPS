@@ -1,0 +1,66 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flowops-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app: flowops
+    tier: mlops
+    environment: staging
+spec:
+  project: default
+  
+  # Source repository configuration
+  source:
+    repoURL: https://github.com/flowops/flowops  # Replace with actual repo
+    targetRevision: develop  # Use develop branch for staging
+    path: infrastructure/helm/flowops
+    
+    # Helm configuration for staging
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+      
+      # Staging-specific parameters
+      parameters:
+        - name: image.tag
+          value: develop-latest
+        - name: replicaCount
+          value: "2"
+        - name: environment
+          value: staging
+        - name: resources.requests.cpu
+          value: 250m
+        - name: resources.requests.memory
+          value: 512Mi
+  
+  # Destination for staging environment
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: flowops-staging
+  
+  # More aggressive sync policy for staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - Replace=true  # More aggressive for staging
+    
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+  
+  revisionHistoryLimit: 5  # Less history for staging

@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: flowops-mlops
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app: flowops
+    tier: mlops
+spec:
+  project: default
+  
+  # Source repository configuration
+  source:
+    repoURL: https://github.com/flowops/flowops  # Replace with actual repo
+    targetRevision: HEAD
+    path: infrastructure/helm/flowops
+    
+    # Helm configuration
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+      
+      # Helm parameters that can be overridden
+      parameters:
+        - name: image.tag
+          value: latest
+        - name: replicaCount
+          value: "3"
+        - name: environment
+          value: production
+  
+  # Destination cluster and namespace
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: flowops-production
+  
+  # Sync policy configuration
+  syncPolicy:
+    # Automated sync configuration
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    # Sync options
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    
+    # Retry configuration
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # Health checks and status
+  revisionHistoryLimit: 10
+  
+  # Ignore certain differences
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: ""
+      kind: Service
+      jsonPointers:
+        - /spec/clusterIP

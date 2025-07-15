@@ -1,0 +1,232 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-config
+  namespace: argo-rollouts
+  labels:
+    app.kubernetes.io/component: rollouts-controller
+    app.kubernetes.io/name: argo-rollouts
+    app.kubernetes.io/part-of: argo-rollouts
+data:
+  # Configuration for Argo Rollouts controller
+  config.yaml: |
+    # Enable metrics server
+    metricsPort: 8080
+    
+    # Enable notifications
+    notifications:
+      enable: true
+      
+    # Default analysis configuration
+    analysis:
+      # Default interval for analysis runs
+      defaultInterval: 30s
+      
+      # Default count of measurements
+      defaultCount: 5
+      
+      # Default failure threshold
+      defaultFailureThreshold: 3
+    
+    # Traffic routing configurations
+    trafficRouterPlugins:
+      # ALB traffic routing
+      alb:
+        # Enable ALB traffic routing
+        enabled: true
+        
+        # Default weight step
+        defaultWeightStep: 10
+        
+        # Sticky sessions support
+        stickyConfig:
+          enabled: false
+    
+    # Rollback configuration
+    rollback:
+      # Auto rollback on failure
+      autoRollback: true
+      
+      # Rollback window in seconds
+      rollbackWindow: 300
+    
+    # Prometheus metrics configuration
+    prometheus:
+      # Enable Prometheus metrics
+      enabled: true
+      
+      # Metrics port
+      port: 8080
+      
+      # Metrics path
+      path: /metrics
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-notification-config
+  namespace: argo-rollouts
+  labels:
+    app.kubernetes.io/component: rollouts-controller
+    app.kubernetes.io/name: argo-rollouts
+    app.kubernetes.io/part-of: argo-rollouts
+data:
+  # Notification configuration
+  config.yaml: |
+    # Slack notifications
+    services:
+      slack:
+        # Token stored in secret
+        token: $slack-token
+        
+        # Default channel
+        channel: "#mlops-alerts"
+        
+        # Username
+        username: "Argo Rollouts"
+        
+        # Icon
+        iconEmoji: ":rocket:"
+    
+    # Email notifications
+    email:
+      host: smtp.gmail.com
+      port: 587
+      from: noreply@flowops.io
+      
+      # Credentials stored in secret
+      username: $email-username
+      password: $email-password
+    
+    # Webhook notifications
+    webhook:
+      url: https://hooks.flowops.io/rollouts
+      headers:
+        - name: Authorization
+          value: Bearer $webhook-token
+    
+    # Templates for different events
+    templates:
+      rollout-started: |
+        🚀 Rollout Started
+        Application: {{.rollout.metadata.name}}
+        Namespace: {{.rollout.metadata.namespace}}
+        Strategy: {{.rollout.spec.strategy}}
+        Revision: {{.rollout.status.currentPodHash}}
+      
+      rollout-completed: |
+        ✅ Rollout Completed Successfully
+        Application: {{.rollout.metadata.name}}
+        Namespace: {{.rollout.metadata.namespace}}
+        Duration: {{.rollout.status.phase}}
+        Revision: {{.rollout.status.currentPodHash}}
+      
+      rollout-failed: |
+        ❌ Rollout Failed
+        Application: {{.rollout.metadata.name}}
+        Namespace: {{.rollout.metadata.namespace}}
+        Reason: {{.rollout.status.message}}
+        Revision: {{.rollout.status.currentPodHash}}
+      
+      rollout-paused: |
+        ⏸️ Rollout Paused
+        Application: {{.rollout.metadata.name}}
+        Namespace: {{.rollout.metadata.namespace}}
+        Current Step: {{.rollout.status.currentStepIndex}}
+        Reason: Waiting for manual promotion
+      
+      analysis-failed: |
+        📊 Analysis Failed
+        Application: {{.rollout.metadata.name}}
+        Analysis: {{.analysis.metadata.name}}
+        Metric: {{.metric.name}}
+        Value: {{.metric.value}}
+        Threshold: {{.metric.successCondition}}
+    
+    # Triggers define when notifications are sent
+    triggers:
+      - name: rollout-events
+        when: rollout.status.phase in ['Progressing', 'Healthy', 'Degraded', 'Paused']
+        send:
+          - slack
+          - webhook
+      
+      - name: analysis-events
+        when: analysis.status.phase in ['Failed', 'Error']
+        send:
+          - slack
+          - email
+          - webhook
+
+---
+# Service Monitor for Prometheus to scrape Argo Rollouts metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argo-rollouts-metrics
+  namespace: argo-rollouts
+  labels:
+    app.kubernetes.io/component: rollouts-controller
+    app.kubernetes.io/name: argo-rollouts
+    app.kubernetes.io/part-of: argo-rollouts
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: rollouts-controller
+      app.kubernetes.io/name: argo-rollouts
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    
+---
+# PrometheusRule for Argo Rollouts alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argo-rollouts-alerts
+  namespace: argo-rollouts
+  labels:
+    app.kubernetes.io/component: rollouts-controller
+    app.kubernetes.io/name: argo-rollouts
+    app.kubernetes.io/part-of: argo-rollouts
+spec:
+  groups:
+  - name: argo-rollouts
+    rules:
+    - alert: RolloutDegraded
+      expr: argo_rollouts_info{phase="Degraded"} == 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Rollout {{ $labels.name }} is degraded"
+        description: "Rollout {{ $labels.name }} in namespace {{ $labels.namespace }} has been in degraded state for more than 5 minutes."
+    
+    - alert: RolloutStuck
+      expr: argo_rollouts_info{phase="Progressing"} == 1 and increase(argo_rollouts_info{phase="Progressing"}[30m]) == 0
+      for: 30m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Rollout {{ $labels.name }} is stuck"
+        description: "Rollout {{ $labels.name }} in namespace {{ $labels.namespace }} has been progressing for more than 30 minutes without completion."
+    
+    - alert: AnalysisRunFailed
+      expr: argo_rollouts_analysis_run_info{phase="Failed"} == 1
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Analysis run {{ $labels.name }} failed"
+        description: "Analysis run {{ $labels.name }} in namespace {{ $labels.namespace }} has failed."
+    
+    - alert: RolloutControllerDown
+      expr: up{job="argo-rollouts-metrics"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Argo Rollouts controller is down"
+        description: "Argo Rollouts controller has been down for more than 5 minutes."

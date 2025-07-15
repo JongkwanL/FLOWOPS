@@ -1,0 +1,182 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowops-sync-policies
+  namespace: argocd
+  labels:
+    app: argocd
+data:
+  # Default sync policy for production environments
+  production-sync-policy: |
+    # Production sync policy - manual approval required
+    automated:
+      prune: false      # Don't auto-prune in production
+      selfHeal: false   # Don't auto-heal in production
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - Validate=true
+    
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  
+  # Staging sync policy - more aggressive automation
+  staging-sync-policy: |
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - Replace=true    # More aggressive for staging
+    
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 2m
+  
+  # Development/Preview sync policy - fastest automation
+  development-sync-policy: |
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: true  # Allow empty for cleanup
+    
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - Replace=true
+      - Force=true      # Force updates for dev
+    
+    retry:
+      limit: 2
+      backoff:
+        duration: 3s
+        factor: 2
+        maxDuration: 30s
+
+---
+# Sync windows configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowops-sync-windows
+  namespace: argocd
+  labels:
+    app: argocd
+data:
+  # Production maintenance windows
+  production-windows: |
+    syncWindows:
+      # Maintenance window - early morning
+      - kind: allow
+        schedule: '0 2-4 * * 1-5'  # 2 AM to 4 AM, Monday to Friday
+        duration: 2h
+        applications:
+          - flowops-mlops
+        manualSync: true
+        
+      # Emergency window - allow manual syncs always
+      - kind: allow
+        schedule: '* * * * *'
+        duration: 1h
+        applications:
+          - flowops-mlops
+        manualSync: true
+        
+      # Block automatic syncs during business hours
+      - kind: deny
+        schedule: '0 8-18 * * 1-5'  # 8 AM to 6 PM, Monday to Friday
+        duration: 10h
+        applications:
+          - flowops-mlops
+        manualSync: false
+  
+  # Staging windows - more permissive
+  staging-windows: |
+    syncWindows:
+      # Allow syncs during extended hours
+      - kind: allow
+        schedule: '0 6-22 * * 1-5'  # 6 AM to 10 PM, weekdays
+        duration: 16h
+        applications:
+          - flowops-staging
+        manualSync: true
+        
+      # Block syncs during backup hours
+      - kind: deny
+        schedule: '0 0-2 * * *'  # Midnight to 2 AM daily
+        duration: 2h
+        applications:
+          - flowops-staging
+        manualSync: false
+
+---
+# Health check configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowops-health-config
+  namespace: argocd
+  labels:
+    app: argocd
+data:
+  # Custom health checks for MLflow components
+  mlflow-health: |
+    healthCheck:
+      - group: apps
+        kind: Deployment
+        name: mlflow-tracking
+        checkType: http
+        httpHeaders:
+          - name: Content-Type
+            value: application/json
+        httpPath: /health
+        httpPort: 5000
+        timeoutSeconds: 10
+        periodSeconds: 30
+        
+  # Custom health checks for model serving
+  model-serving-health: |
+    healthCheck:
+      - group: apps
+        kind: Deployment
+        name: model-serving
+        checkType: http
+        httpHeaders:
+          - name: Content-Type
+            value: application/json
+        httpPath: /health
+        httpPort: 8080
+        timeoutSeconds: 15
+        periodSeconds: 45
+        
+  # Rollout health checks
+  rollout-health: |
+    healthCheck:
+      - group: argoproj.io
+        kind: Rollout
+        checkType: custom
+        script: |
+          # Custom health check for Argo Rollouts
+          status=$(kubectl get rollout $ROLLOUT_NAME -o jsonpath='{.status.phase}')
+          if [ "$status" = "Healthy" ] || [ "$status" = "Progressing" ]; then
+            exit 0
+          else
+            exit 1
+          fi

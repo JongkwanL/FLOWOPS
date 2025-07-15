@@ -1,0 +1,196 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: flowops-environments
+  namespace: argocd
+spec:
+  generators:
+    # Git generator to automatically deploy to different environments
+    - git:
+        repoURL: https://github.com/flowops/flowops
+        revision: HEAD
+        directories:
+          - path: infrastructure/environments/*
+        
+    # Cluster generator for multi-cluster deployments
+    - clusters:
+        selector:
+          matchLabels:
+            environment: production
+  
+  template:
+    metadata:
+      name: 'flowops-{{path.basename}}'
+      labels:
+        environment: '{{path.basename}}'
+        app: flowops
+    spec:
+      project: flowops-mlops
+      
+      source:
+        repoURL: https://github.com/flowops/flowops
+        targetRevision: HEAD
+        path: infrastructure/helm/flowops
+        helm:
+          valueFiles:
+            - values.yaml
+            - '../../../environments/{{path.basename}}/values.yaml'
+          parameters:
+            - name: environment
+              value: '{{path.basename}}'
+            - name: cluster.name
+              value: '{{name}}'
+      
+      destination:
+        server: '{{server}}'
+        namespace: 'flowops-{{path.basename}}'
+      
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+
+---
+# ApplicationSet for model promotion across environments
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: flowops-model-promotion
+  namespace: argocd
+spec:
+  generators:
+    # Pull request generator for preview environments
+    - pullRequest:
+        github:
+          owner: flowops
+          repo: flowops
+          tokenRef:
+            secretName: github-token
+            key: token
+        requeueAfterSeconds: 30
+  
+  template:
+    metadata:
+      name: 'flowops-pr-{{number}}'
+      labels:
+        app: flowops
+        type: preview
+        pr-number: '{{number}}'
+    spec:
+      project: flowops-mlops
+      
+      source:
+        repoURL: https://github.com/flowops/flowops
+        targetRevision: '{{head_sha}}'
+        path: infrastructure/helm/flowops
+        helm:
+          valueFiles:
+            - values.yaml
+            - values-preview.yaml
+          parameters:
+            - name: image.tag
+              value: 'pr-{{number}}-{{head_sha_short}}'
+            - name: environment
+              value: preview
+            - name: pr.number
+              value: '{{number}}'
+            - name: pr.title
+              value: '{{title}}'
+      
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'flowops-pr-{{number}}'
+      
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+        retry:
+          limit: 3
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 1m
+      
+      # Auto-cleanup when PR is closed
+      info:
+        - name: PR
+          value: 'https://github.com/flowops/flowops/pull/{{number}}'
+
+---
+# Matrix generator for multi-environment, multi-cluster deployments
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: flowops-matrix
+  namespace: argocd
+spec:
+  generators:
+    - matrix:
+        generators:
+          # Environment generator
+          - list:
+              elements:
+                - environment: staging
+                  revision: develop
+                  replicas: "2"
+                - environment: production
+                  revision: main
+                  replicas: "3"
+          
+          # Cluster generator
+          - clusters:
+              selector:
+                matchLabels:
+                  deploy: flowops
+  
+  template:
+    metadata:
+      name: 'flowops-{{environment}}-{{name}}'
+      labels:
+        environment: '{{environment}}'
+        cluster: '{{name}}'
+        app: flowops
+    spec:
+      project: flowops-mlops
+      
+      source:
+        repoURL: https://github.com/flowops/flowops
+        targetRevision: '{{revision}}'
+        path: infrastructure/helm/flowops
+        helm:
+          valueFiles:
+            - values.yaml
+            - 'values-{{environment}}.yaml'
+          parameters:
+            - name: environment
+              value: '{{environment}}'
+            - name: replicaCount
+              value: '{{replicas}}'
+            - name: cluster.name
+              value: '{{name}}'
+      
+      destination:
+        server: '{{server}}'
+        namespace: 'flowops-{{environment}}'
+      
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: '{{environment}}'  # Only self-heal in staging
+        syncOptions:
+          - CreateNamespace=true
+        retry:
+          limit: 5

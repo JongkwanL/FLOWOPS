@@ -1,0 +1,195 @@
+{{- if .Values.argoRollouts.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "flowops.fullname" . }}-model-serving
+  labels:
+    {{- include "flowops.labels" . | nindent 4 }}
+    component: model-serving
+spec:
+  replicas: {{ .Values.modelServing.replicaCount }}
+  strategy:
+    canary:
+      maxSurge: "25%"
+      maxUnavailable: 0
+      steps:
+      - setWeight: 10
+      - pause: {duration: 1m}
+      - setWeight: 20
+      - pause: {duration: 2m}
+      - analysis:
+          templates:
+          - templateName: {{ include "flowops.fullname" . }}-success-rate
+          args:
+          - name: service-name
+            value: {{ include "flowops.fullname" . }}-model-serving-canary
+          - name: prometheus-url
+            value: http://{{ include "flowops.fullname" . }}-prometheus-server:80
+      - setWeight: 50
+      - pause: {duration: 5m}
+      - analysis:
+          templates:
+          - templateName: {{ include "flowops.fullname" . }}-latency
+          args:
+          - name: service-name
+            value: {{ include "flowops.fullname" . }}-model-serving-canary
+          - name: prometheus-url
+            value: http://{{ include "flowops.fullname" . }}-prometheus-server:80
+      - setWeight: 80
+      - pause: {duration: 5m}
+      canaryService: {{ include "flowops.fullname" . }}-model-serving-canary
+      stableService: {{ include "flowops.fullname" . }}-model-serving-stable
+      trafficRouting:
+        alb:
+          ingress: {{ include "flowops.fullname" . }}-model-serving
+          servicePort: 80
+  selector:
+    matchLabels:
+      {{- include "flowops.selectorLabels" . | nindent 6 }}
+      component: model-serving
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+      labels:
+        {{- include "flowops.selectorLabels" . | nindent 8 }}
+        component: model-serving
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "flowops.serviceAccountName.modelServing" . }}
+      securityContext:
+        {{- toYaml .Values.modelServing.securityContext | nindent 8 }}
+      containers:
+        - name: model-serving
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.modelServing.image.repository }}:{{ .Values.modelServing.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.modelServing.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- toYaml .Values.modelServing.env | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.modelServing.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.modelServing.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.modelServing.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/mluser/.cache
+            - name: model-config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: model-config
+          configMap:
+            name: {{ .Values.configMaps.modelConfig.name }}
+      {{- with .Values.modelServing.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.modelServing.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.modelServing.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+---
+# Analysis Templates for Argo Rollouts
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "flowops.fullname" . }}-success-rate
+  labels:
+    {{- include "flowops.labels" . | nindent 4 }}
+spec:
+  args:
+  - name: service-name
+  - name: prometheus-url
+  metrics:
+  - name: success-rate
+    interval: 30s
+    count: 5
+    successCondition: result[0] >= 0.95
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: "{{`{{args.prometheus-url}}`}}"
+        query: |
+          sum(rate(model_predictions_total{service="{{`{{args.service-name}}`}}", status="success"}[2m])) /
+          sum(rate(model_predictions_total{service="{{`{{args.service-name}}`}}"}[2m]))
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "flowops.fullname" . }}-latency
+  labels:
+    {{- include "flowops.labels" . | nindent 4 }}
+spec:
+  args:
+  - name: service-name
+  - name: prometheus-url
+  metrics:
+  - name: p95-latency
+    interval: 30s
+    count: 5
+    successCondition: result[0] <= 0.5
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: "{{`{{args.prometheus-url}}`}}"
+        query: |
+          histogram_quantile(0.95,
+            sum(rate(model_prediction_duration_seconds_bucket{service="{{`{{args.service-name}}`}}"}[2m])) by (le)
+          )
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "flowops.fullname" . }}-error-rate
+  labels:
+    {{- include "flowops.labels" . | nindent 4 }}
+spec:
+  args:
+  - name: service-name
+  - name: prometheus-url
+  metrics:
+  - name: error-rate
+    interval: 30s
+    count: 5
+    successCondition: result[0] <= 0.01
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: "{{`{{args.prometheus-url}}`}}"
+        query: |
+          sum(rate(model_predictions_total{service="{{`{{args.service-name}}`}}", status="error"}[2m])) /
+          sum(rate(model_predictions_total{service="{{`{{args.service-name}}`}}"}[2m]))
+{{- end }}

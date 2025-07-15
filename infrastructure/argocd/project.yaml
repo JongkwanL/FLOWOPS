@@ -1,0 +1,145 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: flowops-mlops
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: FlowOps MLOps Platform Project
+  
+  # Source repositories that applications in this project can pull from
+  sourceRepos:
+    - 'https://github.com/flowops/flowops'
+    - 'https://github.com/flowops/*'  # Allow other flowops repositories
+    - 'https://charts.helm.sh/stable'
+    - 'https://prometheus-community.github.io/helm-charts'
+    - 'https://grafana.github.io/helm-charts'
+    - 'https://argoproj.github.io/argo-helm'
+  
+  # Destination clusters and namespaces that applications can deploy to
+  destinations:
+    - namespace: 'flowops-*'
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+  
+  # Cluster resource whitelist - what cluster-scoped resources can be used
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+  
+  # Namespace resource whitelist - what namespaced resources can be used
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: ''
+      kind: PersistentVolumeClaim
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: apps
+      kind: DaemonSet
+    - group: apps
+      kind: ReplicaSet
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: extensions
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: monitoring.coreos.com
+      kind: ServiceMonitor
+    - group: monitoring.coreos.com
+      kind: PrometheusRule
+    - group: argoproj.io
+      kind: Rollout
+    - group: argoproj.io
+      kind: AnalysisTemplate
+    - group: argoproj.io
+      kind: AnalysisRun
+  
+  # Roles for this project
+  roles:
+    # Developer role - can sync applications
+    - name: developer
+      description: Developer role for FlowOps applications
+      policies:
+        - p, proj:flowops-mlops:developer, applications, get, flowops-mlops/*, allow
+        - p, proj:flowops-mlops:developer, applications, sync, flowops-mlops/*, allow
+        - p, proj:flowops-mlops:developer, applications, action/*, flowops-mlops/*, allow
+        - p, proj:flowops-mlops:developer, repositories, get, *, allow
+      groups:
+        - flowops:developers
+    
+    # Admin role - full access
+    - name: admin
+      description: Admin role for FlowOps applications
+      policies:
+        - p, proj:flowops-mlops:admin, applications, *, flowops-mlops/*, allow
+        - p, proj:flowops-mlops:admin, repositories, *, *, allow
+        - p, proj:flowops-mlops:admin, clusters, *, *, allow
+      groups:
+        - flowops:admins
+    
+    # Readonly role - view only
+    - name: readonly
+      description: Readonly role for FlowOps applications
+      policies:
+        - p, proj:flowops-mlops:readonly, applications, get, flowops-mlops/*, allow
+        - p, proj:flowops-mlops:readonly, repositories, get, *, allow
+      groups:
+        - flowops:viewers
+  
+  # Sync windows - when syncs are allowed
+  syncWindows:
+    # Allow syncs during business hours for staging
+    - kind: allow
+      schedule: '0 9-17 * * 1-5'  # 9 AM to 5 PM, Monday to Friday
+      duration: 8h
+      applications:
+        - flowops-staging
+      manualSync: true
+    
+    # Restricted window for production (only manual syncs during maintenance)
+    - kind: deny
+      schedule: '0 0-6 * * *'  # Midnight to 6 AM every day
+      duration: 6h
+      applications:
+        - flowops-mlops
+      manualSync: false
+  
+  # Signature verification settings
+  signatureKeys:
+    - keyID: # Add GPG key ID for signed commits if required

@@ -1,0 +1,158 @@
+{{- if .Values.modelServing.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowops.fullname" . }}-model-serving
+  labels:
+    {{- include "flowops.labels" . | nindent 4 }}
+    component: model-serving
+spec:
+  {{- if not .Values.modelServing.autoscaling.enabled }}
+  replicas: {{ .Values.modelServing.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "flowops.selectorLabels" . | nindent 6 }}
+      component: model-serving
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+      labels:
+        {{- include "flowops.selectorLabels" . | nindent 8 }}
+        component: model-serving
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Values.serviceAccount.modelServing.name }}
+      securityContext:
+        {{- toYaml .Values.modelServing.securityContext | nindent 8 }}
+      containers:
+        - name: model-serving
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.modelServing.image.repository }}:{{ .Values.modelServing.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.modelServing.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- toYaml .Values.modelServing.env | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.modelServing.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.modelServing.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.modelServing.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/mluser/.cache
+            - name: model-config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: model-config
+          configMap:
+            name: {{ .Values.configMaps.modelConfig.name }}
+      {{- with .Values.modelServing.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.modelServing.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.modelServing.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+
+---
+
+{{- if .Values.gpuModelServing.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowops.fullname" . }}-gpu-model-serving
+  labels:
+    {{- include "flowops.labels" . | nindent 4 }}
+    component: gpu-model-serving
+spec:
+  replicas: {{ .Values.gpuModelServing.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "flowops.selectorLabels" . | nindent 6 }}
+      component: gpu-model-serving
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+      labels:
+        {{- include "flowops.selectorLabels" . | nindent 8 }}
+        component: gpu-model-serving
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Values.serviceAccount.modelServing.name }}
+      securityContext:
+        {{- toYaml .Values.modelServing.securityContext | nindent 8 }}
+      containers:
+        - name: gpu-model-serving
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.gpuModelServing.image.repository }}:{{ .Values.gpuModelServing.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.gpuModelServing.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- toYaml .Values.modelServing.env | nindent 12 }}
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+          resources:
+            {{- toYaml .Values.gpuModelServing.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/mluser/.cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+      {{- with .Values.gpuModelServing.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gpuModelServing.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
