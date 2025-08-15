@@ -1,0 +1,44 @@
+# SystemD service file for FlowOps monitoring agent
+# Install: sudo cp monitor-agent.service /etc/systemd/system/
+# Enable: sudo systemctl enable monitor-agent
+# Start: sudo systemctl start monitor-agent
+
+[Unit]
+Description=FlowOps Monitoring Agent
+Documentation=https://github.com/flowops/flowops
+After=network.target
+Wants=network.target
+
+[Service]
+Type=exec
+User=flowops
+Group=flowops
+ExecStart=/usr/local/bin/flowops agent --config-file=/etc/flowops/monitor-config.yaml --metrics-addr=:9090
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=on-failure
+RestartSec=5s
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/flowops /var/lib/flowops
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryHigh=512M
+MemoryMax=1G
+
+# Environment
+Environment=GOMAXPROCS=2
+Environment=GOMEMLIMIT=512MiB
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flowops-monitor
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,170 @@
+# FlowOps Monitoring Agent Configuration
+
+# Global settings
+global:
+  check_interval: 30s
+  timeout: 10s
+  metrics_addr: ":9090"
+  log_level: info
+
+# Service configurations
+services:
+  # MLflow tracking server
+  mlflow:
+    name: "mlflow"
+    url: "http://localhost:5000"
+    health_path: "/health"
+    check_type: "http"
+    timeout: 10s
+    interval: 30s
+    expected_code: 200
+    headers:
+      User-Agent: "FlowOps-Monitor/1.0"
+    
+  # Alternative MLflow URLs for different environments
+  mlflow-k8s:
+    name: "mlflow-k8s"
+    url: "http://mlflow.flowops-production.svc.cluster.local:5000"
+    health_path: "/health"
+    check_type: "http"
+    timeout: 15s
+    interval: 60s
+    expected_code: 200
+    enabled: false  # Disabled by default
+
+  # Model serving API
+  model-api:
+    name: "model-api"
+    url: "http://localhost:8080"
+    health_path: "/health"
+    check_type: "http"
+    timeout: 10s
+    interval: 30s
+    expected_code: 200
+    headers:
+      User-Agent: "FlowOps-Monitor/1.0"
+
+  # Model serving API in Kubernetes
+  model-api-k8s:
+    name: "model-api-k8s"
+    url: "http://model-serving.flowops-production.svc.cluster.local:8080"
+    health_path: "/health"
+    check_type: "http"
+    timeout: 15s
+    interval: 45s
+    expected_code: 200
+    enabled: false  # Disabled by default
+
+  # DVC repository status
+  dvc:
+    name: "dvc"
+    url: "file://."
+    check_type: "command"
+    command: "dvc status --json"
+    timeout: 15s
+    interval: 120s  # Check every 2 minutes
+
+  # DVC remote connectivity
+  dvc-remote:
+    name: "dvc-remote"
+    url: "file://."
+    check_type: "command"
+    command: "dvc remote list"
+    timeout: 10s
+    interval: 300s  # Check every 5 minutes
+
+  # Kubernetes deployments
+  kubernetes-deployments:
+    name: "k8s-deployments"
+    url: "k8s://flowops-production"
+    check_type: "command"
+    command: "kubectl get deployments -n flowops-production -o json"
+    timeout: 20s
+    interval: 60s
+
+  # Kubernetes services
+  kubernetes-services:
+    name: "k8s-services"
+    url: "k8s://flowops-production"
+    check_type: "command"
+    command: "kubectl get services -n flowops-production -o json"
+    timeout: 20s
+    interval: 120s
+
+  # ArgoCD applications
+  argocd-apps:
+    name: "argocd-apps"
+    url: "argocd://default"
+    check_type: "command"
+    command: "argocd app list -o json"
+    timeout: 30s
+    interval: 300s  # Check every 5 minutes
+    enabled: false  # Disabled by default, requires ArgoCD CLI
+
+  # Prometheus metrics endpoint
+  prometheus:
+    name: "prometheus"
+    url: "http://localhost:9090"
+    health_path: "/-/healthy"
+    check_type: "http"
+    timeout: 10s
+    interval: 60s
+    expected_code: 200
+    enabled: false  # Disabled by default
+
+  # Grafana dashboard
+  grafana:
+    name: "grafana"
+    url: "http://localhost:3000"
+    health_path: "/api/health"
+    check_type: "http"
+    timeout: 10s
+    interval: 60s
+    expected_code: 200
+    enabled: false  # Disabled by default
+
+# Notification settings (future implementation)
+notifications:
+  enabled: false
+  
+  # Slack notifications
+  slack:
+    enabled: false
+    webhook_url: ""
+    channel: "#flowops-alerts"
+    
+  # Email notifications  
+  email:
+    enabled: false
+    smtp_server: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    from: "flowops-monitor@company.com"
+    to: ["team@company.com"]
+
+# Alert rules (future implementation)
+alerts:
+  enabled: false
+  
+  rules:
+    # Service down alert
+    - name: "service_down"
+      condition: "service_up == 0"
+      duration: "2m"
+      severity: "critical"
+      message: "Service {{ .service }} is down"
+    
+    # High response time alert
+    - name: "high_response_time"
+      condition: "response_time > 5s"
+      duration: "5m"
+      severity: "warning"
+      message: "Service {{ .service }} has high response time: {{ .response_time }}"
+    
+    # MLflow experiments check
+    - name: "mlflow_no_experiments"
+      condition: "mlflow_experiments_count == 0"
+      duration: "10m"
+      severity: "warning"
+      message: "No MLflow experiments found"
