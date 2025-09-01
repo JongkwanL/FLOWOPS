@@ -20,9 +20,19 @@ GOTOOL := $(GOCMD) tool
 
 all: clean deps test build
 
-build: ## Build the binary
+build: build-cli build-monitor build-gateway ## Build all binaries
+
+build-cli: ## Build the CLI binary
 	@echo "Building $(BINARY_NAME)..."
 	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/flowops
+
+build-monitor: ## Build the monitoring agent
+	@echo "Building monitor agent..."
+	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-monitor ./cmd/monitor
+
+build-gateway: ## Build the API gateway
+	@echo "Building API gateway..."
+	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-gateway ./cmd/gateway
 
 build-linux: ## Build for Linux
 	@echo "Building $(BINARY_NAME) for Linux..."

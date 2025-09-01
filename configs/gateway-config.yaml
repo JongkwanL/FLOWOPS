@@ -1,0 +1,147 @@
+# FlowOps API Gateway Configuration
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: "15s"
+  write_timeout: "15s"
+  idle_timeout: "60s"
+
+# Security configuration
+security:
+  enable_auth: false
+  jwt_secret: "your-secret-key-here"
+  enable_cors: true
+  enable_rate_limit: true
+  rate_limit_rps: 100
+
+# TLS configuration
+tls:
+  enabled: false
+  cert_file: ""
+  key_file: ""
+
+# Upstream services
+upstreams:
+  mlflow:
+    url: "http://localhost:5000"
+    health_check: "/health"
+    timeout: "30s"
+    retry_attempts: 3
+    circuit_breaker:
+      max_failures: 5
+      reset_timeout: "60s"
+  
+  model_serving:
+    url: "http://localhost:8000"
+    health_check: "/health"
+    timeout: "30s"
+    retry_attempts: 3
+    circuit_breaker:
+      max_failures: 5
+      reset_timeout: "60s"
+  
+  prometheus:
+    url: "http://localhost:9090"
+    health_check: "/-/healthy"
+    timeout: "10s"
+    retry_attempts: 2
+  
+  grafana:
+    url: "http://localhost:3000"
+    health_check: "/api/health"
+    timeout: "10s"
+    retry_attempts: 2
+
+# Load balancing configuration
+load_balancing:
+  algorithm: "round-robin"  # round-robin, weighted, least-connections
+  health_check_interval: "30s"
+  
+# Metrics configuration
+metrics:
+  enabled: true
+  path: "/metrics"
+  namespace: "flowops_gateway"
+
+# Logging configuration
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json, text
+  output: "stdout"  # stdout, stderr, file path
+
+# Request/Response configuration
+request:
+  max_body_size: "10MB"
+  timeout: "30s"
+  
+response:
+  enable_compression: true
+  compression_level: 6
+
+# Cache configuration
+cache:
+  enabled: false
+  backend: "redis"  # redis, memory
+  redis_url: "redis://localhost:6379/0"
+  default_ttl: "5m"
+
+# Rate limiting configuration
+rate_limiting:
+  enabled: true
+  algorithm: "token_bucket"  # token_bucket, leaky_bucket
+  requests_per_second: 100
+  burst_size: 200
+  
+# Authentication configuration
+authentication:
+  enabled: false
+  providers:
+    jwt:
+      secret: "your-jwt-secret"
+      algorithm: "HS256"
+      expiration: "24h"
+    oauth2:
+      enabled: false
+      provider: "google"
+      client_id: ""
+      client_secret: ""
+
+# Authorization configuration
+authorization:
+  enabled: false
+  default_policy: "deny"
+  roles:
+    - name: "admin"
+      permissions: ["*"]
+    - name: "user"
+      permissions: ["read", "execute"]
+    - name: "viewer"
+      permissions: ["read"]
+
+# Circuit breaker configuration
+circuit_breaker:
+  enabled: true
+  max_failures: 5
+  reset_timeout: "60s"
+  half_open_max_calls: 3
+
+# Retry configuration
+retry:
+  enabled: true
+  max_attempts: 3
+  initial_delay: "100ms"
+  max_delay: "5s"
+  backoff_multiplier: 2.0
+
+# Health check configuration
+health_check:
+  enabled: true
+  interval: "30s"
+  timeout: "5s"
+  endpoints:
+    - name: "self"
+      path: "/health"
+    - name: "ready"
+      path: "/ready"
