@@ -1,0 +1,166 @@
+# FlowOps Drift Detection Service Configuration
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 8090
+  enable_metrics: true
+  enable_cors: true
+  log_level: "info"
+
+# Drift detection algorithms configuration
+detection:
+  # ADWIN (Adaptive Windowing) parameters
+  adwin:
+    delta: 0.002  # Confidence parameter (0 < delta < 1)
+    
+  # Population Stability Index parameters
+  psi:
+    threshold: 0.1  # Alert threshold for PSI
+    bins: 10        # Number of bins for histogram
+    
+  # Kolmogorov-Smirnov test parameters
+  ks:
+    alpha: 0.05     # Significance level
+    
+  # Jensen-Shannon divergence parameters
+  js:
+    threshold: 0.1  # Alert threshold for JS divergence
+    
+  # Wasserstein distance parameters
+  wasserstein:
+    threshold: 0.1  # Alert threshold for Wasserstein distance
+    
+  # General parameters
+  min_sample_size: 30  # Minimum sample size for detection
+  
+  # Enabled detection methods
+  enabled_methods:
+    - "psi"
+    - "ks" 
+    - "adwin"
+    - "js"
+    - "wasserstein"
+
+# Alert configuration
+alerts:
+  thresholds:
+    psi: 0.1
+    ks: 0.05
+    adwin: 0.5
+    js: 0.1
+    wasserstein: 0.1
+    
+  severity_levels:
+    low: "0.0-0.3"
+    medium: "0.3-0.7"
+    high: "0.7-1.0"
+
+# Monitoring and metrics
+monitoring:
+  prometheus:
+    enabled: true
+    metrics_path: "/metrics"
+    
+  health_checks:
+    enabled: true
+    health_path: "/health"
+    ready_path: "/ready"
+
+# API configuration
+api:
+  version: "v1"
+  base_path: "/api/v1"
+  
+  # Rate limiting (requests per minute)
+  rate_limit: 1000
+  
+  # Request timeout
+  timeout: "30s"
+  
+  # Maximum request body size
+  max_body_size: "10MB"
+
+# Storage configuration (for future enhancement)
+storage:
+  # Type of storage backend
+  type: "memory"  # memory, redis, postgresql
+  
+  # Memory storage settings
+  memory:
+    max_results: 10000
+    cleanup_interval: "1h"
+    
+  # Redis storage settings (for future use)
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+    password: ""
+    
+  # PostgreSQL storage settings (for future use)
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "flowops_drift"
+    username: "flowops"
+    password: ""
+
+# Logging configuration
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json, text
+  output: "stdout"  # stdout, stderr, file path
+  
+# Security configuration
+security:
+  # Enable authentication (for future enhancement)
+  auth:
+    enabled: false
+    method: "jwt"  # jwt, api_key
+    
+  # CORS settings
+  cors:
+    enabled: true
+    allowed_origins: ["*"]
+    allowed_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allowed_headers: ["Content-Type", "Authorization"]
+    
+# Performance tuning
+performance:
+  # Number of worker goroutines for processing
+  workers: 10
+  
+  # Buffer size for async processing
+  buffer_size: 1000
+  
+  # Batch processing settings
+  batch:
+    max_size: 100
+    timeout: "5s"
+    
+# Example model configurations
+models:
+  fraud_detection:
+    features:
+      - name: "transaction_amount"
+        type: "continuous"
+        alert_threshold: 0.15
+        
+      - name: "user_age"
+        type: "continuous"
+        alert_threshold: 0.1
+        
+      - name: "transaction_hour"
+        type: "discrete"
+        alert_threshold: 0.2
+        
+  recommendation_engine:
+    features:
+      - name: "user_rating"
+        type: "continuous"
+        alert_threshold: 0.1
+        
+      - name: "item_category"
+        type: "categorical"
+        alert_threshold: 0.2

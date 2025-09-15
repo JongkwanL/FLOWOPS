@@ -20,7 +20,7 @@ GOTOOL := $(GOCMD) tool
 
 all: clean deps test build
 
-build: build-cli build-monitor build-gateway ## Build all binaries
+build: build-cli build-monitor build-gateway build-drift ## Build all binaries
 
 build-cli: ## Build the CLI binary
 	@echo "Building $(BINARY_NAME)..."
@@ -33,6 +33,10 @@ build-monitor: ## Build the monitoring agent
 build-gateway: ## Build the API gateway
 	@echo "Building API gateway..."
 	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-gateway ./cmd/gateway
+
+build-drift: ## Build the drift detection service
+	@echo "Building drift detection service..."
+	$(GOBUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-drift ./cmd/drift
 
 build-linux: ## Build for Linux
 	@echo "Building $(BINARY_NAME) for Linux..."
